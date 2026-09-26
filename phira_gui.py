@@ -17,6 +17,32 @@ from zipfile import ZipFile
 LEVELS = ["EZ", "HD", "IN", "AT"]
 AUDIO_EXTS = [".ogg", ".wav", ".mp3"]
 
+# Random（Sobrem × Silentroom）七张差分谱的谱师。
+# 游戏内按 R/A/N/D/O/M 六字母展示（基础版无字母），变体号 .1~.6 依次对应。
+# 谱师名义 = 主谱师 × 该字母变体的合作谱师（来自游戏内展示与 il2cpp 代码常量）。
+RANDOM_VARIANTS = {
+    "1": "R", "2": "A", "3": "N", "4": "D", "5": "O", "6": "M",
+}
+RANDOM_CHARTER = {
+    # (难度, 字母) -> 谱师名义
+    ("EZ", ""): "Barbarianerman", ("HD", ""): "IMD_6", ("IN", ""): "_鉄",
+    ("EZ", "R"): "野从 & V17AMax", ("HD", "R"): "Rikko & JKy", ("IN", "R"): "TangScend & Rikko",
+    ("EZ", "A"): "野从 & Pcat", ("HD", "A"): "Rikko & Ctymax", ("IN", "A"): "TangScend & NerSAN",
+    ("EZ", "N"): "野从 & TimiTini", ("HD", "N"): "Rikko & Gausbon", ("IN", "N"): "TangScend & Myna",
+    ("EZ", "D"): "野从 & Clutter", ("HD", "D"): "Rikko & Uvernight", ("IN", "D"): "TangScend & Su1fuR",
+    ("EZ", "O"): "野从 & 阿爽", ("HD", "O"): "Rikko & 晨", ("IN", "O"): "TangScend & 百九十八",
+    ("EZ", "M"): "野从 & J.R", ("HD", "M"): "Rikko & Likey", ("IN", "M"): "TangScend & XMT小咩兔",
+}
+
+
+def random_variant_of(base_id):
+    """返回 (是否 Random 变体, 字母)。如 Random.SobremSilentroom.3 -> (True, 'N')。"""
+    stem = base_id.rsplit(".", 1)[0] if "." in base_id else base_id
+    if stem != "Random.SobremSilentroom":
+        return False, ""
+    suffix = base_id.rsplit(".", 1)[-1]
+    return True, RANDOM_VARIANTS.get(suffix, "")
+
 
 def load_infos():
     """读取 info.tsv + difficulty.tsv -> {曲id: 元数据}；文件缺失时返回空表。"""
@@ -62,9 +88,16 @@ def find_audio(base_id, level=None):
 
 def find_picture(base_id):
     dirs = ("illustrationLowRes", "illustration", "illustrationBlur")
-    for d in dirs:
-        if os.path.isfile("%s/%s.png" % (d, base_id)):
-            return "%s/%s.png" % (d, base_id)
+    # 曲 id 形如 曲名.曲师.编号；多变体曲（Random 的 .1~.6）共用无编号曲绘，逐步去尾降级
+    bases = [base_id]
+    parts = base_id.split(".")
+    while len(parts) > 1:
+        parts.pop()
+        bases.append(".".join(parts))
+    for b in bases:
+        for d in dirs:
+            if os.path.isfile("%s/%s.png" % (d, b)):
+                return "%s/%s.png" % (d, b)
     if base_id.startswith("c9s."):
         # 隐藏曲曲绘不在常规目录，用 c9s 素材兜底（Blur 曲绘/合集头图/剧情立绘）
         for pat in ("illustrationBlur/c9s.*.png", "illustration/c9s.*.png", "c9s/*.png"):
@@ -92,12 +125,20 @@ def scan_songs():
     return songs
 
 
+def info_for(base_id, infos):
+    """查 info 条目；多变体曲（Random.SobremSilentroom.5 等）回退到去编号的主条目。"""
+    m = infos.get(base_id)
+    if m is None and "." in base_id and base_id.rsplit(".", 1)[-1].isdigit():
+        m = infos.get(base_id.rsplit(".", 1)[0])
+    return m
+
+
 def meta_for(base_id, infos):
     """取元数据；无 info.tsv 时从曲 id（曲名.曲师）推导。隐藏曲（c9s.*）无公开信息。"""
     if base_id.startswith("c9s."):
         return "Chapter 9 隐藏曲", "", "", []
-    if base_id in infos:
-        m = infos[base_id]
+    m = info_for(base_id, infos)
+    if m is not None:
         return m["Name"], m["Composer"], m["Illustrator"], m.get("difficulty", [])
     name, _, composer = base_id.rpartition(".")
     return (name or base_id), composer, "", []
@@ -121,6 +162,13 @@ def build_pez(base_id, chart_dir, level, meta, out_path):
     lv_index = LEVELS.index(level) if level in LEVELS else -1
     lv_value = difficulty[lv_index] if 0 <= lv_index < len(difficulty) else "-"
     charter = charter_list[lv_index] if 0 <= lv_index < len(charter_list) else ""
+
+    # Random 差分谱：谱师名义按变体字母表给出
+    is_random, letter = random_variant_of(base_id)
+    if is_random:
+        charter = RANDOM_CHARTER.get((level, letter), charter)
+        if letter:
+            name = "%s [%s]" % (name, letter)
 
     audio_ext = os.path.splitext(audio)[1]
     info_txt = (
@@ -204,14 +252,21 @@ class App(tk.Tk):
 
         self.refresh_list()
 
+    def display_name(self, base_id):
+        """列表/标题显示名；Random 变体追加 [R] 等字母标注。"""
+        name = self.song_meta[base_id][0]
+        is_random, letter = random_variant_of(base_id)
+        if is_random and letter:
+            return "%s [%s]" % (name, letter)
+        return name
+
     # ── 事件 ──────────────────────────────────────
     def refresh_list(self):
         kw = self.search_var.get().strip().lower()
         self.listbox.delete(0, "end")
         self.list_index = []
         for i, (base_id, levels, _) in enumerate(self.songs):
-            name = self.song_meta[base_id][0]
-            text = "%s  (%s)" % (name, base_id)
+            text = "%s  (%s)" % (self.display_name(base_id), base_id)
             if kw and kw not in text.lower():
                 continue
             self.listbox.insert("end", text)
@@ -227,7 +282,7 @@ class App(tk.Tk):
         self.current = (base_id, levels, chart_dir)
         name, composer, illustrator, difficulty = self.song_meta[base_id]
         audio = find_audio(base_id, None)
-        self.name_var.set(name)
+        self.name_var.set(self.display_name(base_id))
         self.detail_var.set(
             "曲师: %s\n画师: %s\n曲id: %s\n音频: %s" % (
                 composer or "-", illustrator or "-", base_id,
@@ -246,8 +301,12 @@ class App(tk.Tk):
         idx = LEVELS.index(lv) if lv in LEVELS else -1
         lv_value = difficulty[idx] if 0 <= idx < len(difficulty) else "-"
         charter = ""
-        if 0 <= idx < len(self.infos.get(base_id, {}).get("Charter", [])):
-            charter = self.infos[base_id]["Charter"][idx]
+        m = info_for(base_id, self.infos)
+        if m is not None and 0 <= idx < len(m.get("Charter", [])):
+            charter = m["Charter"][idx]
+        is_random, letter = random_variant_of(base_id)
+        if is_random:
+            charter = RANDOM_CHARTER.get((lv, letter), charter)
         self.detail_var.set(
             "曲师: %s\n画师: %s\n定数: %s\n谱师: %s\n曲id: %s" % (
                 composer or "-", illustrator or "-", lv_value, charter or "-", base_id))
@@ -267,7 +326,8 @@ class App(tk.Tk):
             defaultextension=".pez", filetypes=[("Phira 谱面包", "*.pez")])
         if not out:
             return
-        meta = self.song_meta[base_id] + (self.infos.get(base_id, {}).get("Charter", []),)
+        m = info_for(base_id, self.infos)
+        meta = self.song_meta[base_id] + (m["Charter"] if m else [],)
         try:
             ok, msg = build_pez(base_id, chart_dir, lv, meta, out)
         except Exception as e:

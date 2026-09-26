@@ -22,6 +22,15 @@ queue_in = Queue()
 avatar = {}  # addressableKey -> 头像显示名（info/tmp.tsv，缺省用 key 本身）
 
 
+def sanitize(path):
+    """仅清洗文件名中的 Windows 非法字符（头像名可能含 : / 等，如 Cipher : /2&//<|0），
+    目录分隔符保持不变。"""
+    head, _, tail = path.rpartition("/")
+    for ch in '\\/:*?"<>|':
+        tail = tail.replace(ch, "_")
+    return head + "/" + tail if head else tail
+
+
 def io():
     while True:
         item = queue_in.get()
@@ -29,6 +38,7 @@ def io():
             break
         else:
             path, resource = item
+            path = sanitize(path)
             if type(resource) == BytesIO:
                 with resource:
                     with open(path, "wb") as f:
@@ -95,40 +105,29 @@ def save(key, entry, pool, logger):
         if not os.path.exists(p):
             os.mkdir(p)
         queue_in.put(("chart/%s/%s.json" % (key[:-14], key[-7:-5]), obj.script))
-    elif config["illustrationBlur"] and key[-23:-3] == ".0/IllustrationBlur.":
-        key = key[:-23]
+    elif config["illustrationBlur"] and "/IllustrationBlur." in key:
+        key = key[:key.index("/IllustrationBlur.")]
         bytesIO = BytesIO()
         obj.image.save(bytesIO, "png")
         queue_in.put(("illustrationBlur/%s.png" % key, bytesIO))
-    elif config["illustrationLowRes"] and key[-25:-3] == ".0/IllustrationLowRes.":
-        key = key[:-25]
+    elif config["illustrationLowRes"] and "/IllustrationLowRes." in key:
+        key = key[:key.index("/IllustrationLowRes.")]
         pool.submit(save_image, "illustrationLowRes/%s.png" % key, obj.image)
-    elif config["illustration"] and key[-19:-3] == ".0/Illustration.":
-        key = key[:-19]
+    elif config["illustration"] and "/Illustration." in key:
+        key = key[:key.index("/Illustration.")]
         pool.submit(save_image, "illustration/%s.png" % key, obj.image)
-    elif config["music"] and key[-12:] == ".0/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.ogg" % key, obj)
-    elif config["music"] and key[-12:] == ".1/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.1.ogg" % key, obj)
-    elif config["music"] and key[-12:] == ".2/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.2.ogg" % key, obj)
-    elif config["music"] and key[-12:] == ".3/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.3.ogg" % key, obj)
-    elif config["music"] and key[-12:] == ".4/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.4.ogg" % key, obj)
-    elif config["music"] and key[-12:] == ".5/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.5.ogg" % key, obj)
-    elif config["music"] and key[-12:] == ".6/music.wav":
-        key = key[:-12]
-        pool.submit(save_music, "music/%s.6.ogg" % key, obj)
-    elif config["music"] and key[-15:] == ".0/music_IN.wav":
-        key = key[:-15]
+    elif config["music"] and key.endswith("/music.wav"):
+        # 曲目 id 含编号后缀（曲名.曲师.N）；无编号曲目（Introduction 等）原样保留
+        key = key[:-len("/music.wav")]
+        suffix = ""
+        if "." in key and key.rsplit(".", 1)[-1].isdigit():
+            key, suffix = key.rsplit(".", 1)
+            suffix = "." + suffix
+        pool.submit(save_music, "music/%s%s.ogg" % (key, suffix), obj)
+    elif config["music"] and key.endswith("/music_IN.wav"):
+        key = key[:-len("/music_IN.wav")]
+        if "." in key and key.rsplit(".", 1)[-1].isdigit():
+            key = key.rsplit(".", 1)[0]
         pool.submit(save_music, "music/%s_IN.ogg" % key, obj)
 
 
