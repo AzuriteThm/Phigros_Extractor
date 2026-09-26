@@ -1,3 +1,5 @@
+本工具使用 GLM 5.3 辅助编写。
+
 # Phigros 拆包工具（PhigrosExtractor）
 
 把 Phigros 安装包（APK）里的资源提取为通用格式：谱面 JSON、曲绘 PNG、音乐 WAV、
