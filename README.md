@@ -1,11 +1,13 @@
-本工具使用 GLM 5.3 辅助编写。
-
 # Phigros 拆包工具（PhigrosExtractor）
 
 把 Phigros 安装包（APK）里的资源提取为通用格式：谱面 JSON、曲绘 PNG、音乐 WAV、
 曲目信息表，并可打包成 Phira 可读取的 `.pez` 自制谱。
 
-**已适配 Phigros 4.0.0（第九章）**，同时兼容旧版安装包（3.x）。
+**已适配 Phigros 4.0.1**，同时兼容 3.x / 4.0.0 旧版安装包。
+
+4.0.1 适配点：场景数据并入 `data.unity3d`（信息表读取已兼容）；多曲绘曲目
+（What do you want more than a Happy ending? 每难度一张曲绘，按难度自动选用）；
+新难度 SP（Message 等）；曲绘/音乐命名与旧版统一（剥离 `.0` 编号）。
 仅供个人学习使用，请勿传播提取出的资源。
 
 ---
@@ -45,22 +47,23 @@
 | `avatar/` | 头像 PNG |
 | `c9s/` | 第九章隐藏曲其余素材（合集头图、剧情立绘等） |
 
-## 交互式打包 .pez（Phira 自制谱）
+## 打包 .pez（Phira 自制谱）
 
-```
-python phira_gui.py
-```
-
+**交互式**：`python phira_gui.py`
 弹出窗口：搜索/选择曲目 → 点选难度（该曲没有的难度自动置灰）→ 保存 .pez。
 选中曲目后右侧面板显示曲师/画师/定数/谱师，切换难度时联动更新。
 
-自动处理的特殊情况：
+**批量**：`python phira.py`
+把所有曲目按难度打包到 `phira/{EZ,HD,IN,AT,SP}/`（隐藏曲进 SP）。
+默认跳过已存在的 pez，`python phira.py -f` 强制重新打包。
+序章演示曲 Introduction（无音频）自动跳过。
+
+两者共用同一套打包规则，自动处理：
 
 - IN 专用音源（Cristalisia 的 `music_IN`）按所选难度自动选用；
 - 第九章隐藏曲（`c9s.*`）谱面/音频/曲绘跨目录配对，难度显示为 SP；
+- 多变体曲（Random 的 `.1`~`.6`）自动回退到共用曲绘与主条目元数据；
 - `info.tsv` 缺失时从曲 id（`曲名.曲师`）推导元数据。
-
-另有旧脚本 `python phira.py`：一次性把**所有**曲目按难度打包到 `phira/{EZ,HD,IN,AT}/`。
 
 ## 配置（config.ini）
 
@@ -109,6 +112,7 @@ side_story = 0
 | `resource.py` | 资源提取主程序 |
 | `ogg2wav.py` | ogg 转 wav |
 | `phira_gui.py` | 交互式 .pez 打包器 |
+| `phira.py` | 批量 .pez 打包器（复用 phira_gui 的打包规则） |
 | `typetree.json` | MonoBehaviour 结构定义（`*_v400` 条目由 DummyDll 生成） |
 | `config.ini` | 提取开关 / 隐藏曲密码 / 增量模式 |
 | `libogg.dll` `libvorbis.dll` | fsb5 音频重建必需，勿删 |

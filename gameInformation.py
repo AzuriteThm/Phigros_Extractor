@@ -26,13 +26,20 @@ def read_monobehaviours(env):
 
 
 def run_legacy(path, logger, typetree):
-    """旧版 APK：GameInformation 等 MonoBehaviour 还在 bin/Data 的场景文件里。"""
+    """旧版 APK：GameInformation 等 MonoBehaviour 在 bin/Data 的场景文件里。
+    4.0.1 起场景全部并入 data.unity3d（无独立 level0），两种布局都支持。"""
     env = Environment()
     with zipfile.ZipFile(path) as apk:
-        with apk.open("assets/bin/Data/globalgamemanagers.assets") as f:
-            env.load_file(BytesIO(f.read()), name="assets/bin/Data/globalgamemanagers.assets")
-        with apk.open("assets/bin/Data/level0") as f:
-            env.load_file(BytesIO(f.read()))
+        names = set(apk.namelist())
+        if "assets/bin/Data/data.unity3d" in names:
+            # 4.0.1+：全部场景数据在 data.unity3d
+            with apk.open("assets/bin/Data/data.unity3d") as f:
+                env.load_file(BytesIO(f.read()), name="assets/bin/Data/data.unity3d")
+        else:
+            with apk.open("assets/bin/Data/globalgamemanagers.assets") as f:
+                env.load_file(BytesIO(f.read()), name="assets/bin/Data/globalgamemanagers.assets")
+            with apk.open("assets/bin/Data/level0") as f:
+                env.load_file(BytesIO(f.read()))
 
     candidates = {
         "GameInformation": ["GameInformation", "GameInformation_v400"],

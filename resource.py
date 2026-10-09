@@ -22,6 +22,13 @@ queue_in = Queue()
 avatar = {}  # addressableKey -> 头像显示名（info/tmp.tsv，缺省用 key 本身）
 
 
+def _strip_song_index(song):
+    """曲名.曲师.编号 -> 剥离 .0 主版本编号（与旧版命名一致）；.1~.6 变体保留。"""
+    if song.endswith(".0"):
+        return song[:-2]
+    return song
+
+
 def sanitize(path):
     """仅清洗文件名中的 Windows 非法字符（头像名可能含 : / 等，如 Cipher : /2&//<|0），
     目录分隔符保持不变。"""
@@ -105,6 +112,21 @@ def save(key, entry, pool, logger):
         if not os.path.exists(p):
             os.mkdir(p)
         queue_in.put(("chart/%s/%s.json" % (key[:-14], key[-7:-5]), obj.script))
+    elif config["illustrationBlur"] and "/IllustrationBlur_" in key:
+        # 多曲绘曲目：IllustrationBlur_EZ/HD/IN/AT.jpg（按难度区分曲绘）
+        song = _strip_song_index(key[:key.index("/IllustrationBlur_")])
+        lv = key[key.index("/IllustrationBlur_") + len("/IllustrationBlur_"):-4]
+        bytesIO = BytesIO()
+        obj.image.save(bytesIO, "png")
+        queue_in.put(("illustrationBlur/%s_%s.png" % (song, lv), bytesIO))
+    elif config["illustrationLowRes"] and "/IllustrationLowRes_" in key:
+        song = _strip_song_index(key[:key.index("/IllustrationLowRes_")])
+        lv = key[key.index("/IllustrationLowRes_") + len("/IllustrationLowRes_"):-4]
+        pool.submit(save_image, "illustrationLowRes/%s_%s.png" % (song, lv), obj.image)
+    elif config["illustration"] and "/Illustration_" in key:
+        song = _strip_song_index(key[:key.index("/Illustration_")])
+        lv = key[key.index("/Illustration_") + len("/Illustration_"):-4]
+        pool.submit(save_image, "illustration/%s_%s.png" % (song, lv), obj.image)
     elif config["illustrationBlur"] and "/IllustrationBlur." in key:
         key = key[:key.index("/IllustrationBlur.")]
         bytesIO = BytesIO()
@@ -117,12 +139,14 @@ def save(key, entry, pool, logger):
         key = key[:key.index("/Illustration.")]
         pool.submit(save_image, "illustration/%s.png" % key, obj.image)
     elif config["music"] and key.endswith("/music.wav"):
-        # 曲目 id 含编号后缀（曲名.曲师.N）；无编号曲目（Introduction 等）原样保留
+        # 曲目 id 含编号后缀（曲名.曲师.N，N=0 为主版本，命名时剥离；.1~.6 为变体保留）
+        # 无编号曲目（Introduction 等）原样保留
         key = key[:-len("/music.wav")]
         suffix = ""
         if "." in key and key.rsplit(".", 1)[-1].isdigit():
-            key, suffix = key.rsplit(".", 1)
-            suffix = "." + suffix
+            key, n = key.rsplit(".", 1)
+            if n != "0":
+                suffix = "." + n
         pool.submit(save_music, "music/%s%s.ogg" % (key, suffix), obj)
     elif config["music"] and key.endswith("/music_IN.wav"):
         key = key[:-len("/music_IN.wav")]

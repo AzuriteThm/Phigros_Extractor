@@ -86,9 +86,16 @@ def find_audio(base_id, level=None):
     return None
 
 
-def find_picture(base_id):
+def find_picture(base_id, level=None):
+    """找曲绘。多曲绘曲目（如 What do you want more than a happy ending?）
+    每个难度一张曲绘（Illustration_EZ.png 等），按难度优先选用；
+    找不到难度专属曲绘时降级到共用曲绘（多变体曲如 Random 再逐步去尾）。"""
     dirs = ("illustrationLowRes", "illustration", "illustrationBlur")
-    # 曲 id 形如 曲名.曲师.编号；多变体曲（Random 的 .1~.6）共用无编号曲绘，逐步去尾降级
+    if level in LEVELS or level == "SP":
+        for d in dirs:
+            p = "%s/%s_%s.png" % (d, base_id, level)
+            if os.path.isfile(p):
+                return p
     bases = [base_id]
     parts = base_id.split(".")
     while len(parts) > 1:
@@ -119,7 +126,7 @@ def scan_songs():
         if os.path.isfile(os.path.join(full, "Chart.json")):
             songs.append((d, ["SP"], d))  # 第九章隐藏曲
             continue
-        levels = [lv for lv in LEVELS if os.path.isfile(os.path.join(full, "%s.json" % lv))]
+        levels = [lv for lv in LEVELS + ["SP"] if os.path.isfile(os.path.join(full, "%s.json" % lv))]
         if levels:
             songs.append((d[:-2] if d.endswith(".0") else d, levels, d))
     return songs
@@ -147,14 +154,16 @@ def meta_for(base_id, infos):
 def build_pez(base_id, chart_dir, level, meta, out_path):
     """打包一个 .pez（zip：info.txt + 谱面 + 曲绘 + 音频）。返回 (ok, 消息)。
     meta = (曲名, 曲师, 画师, 定数列表, 谱师列表)"""
-    chart_path = os.path.join("chart", chart_dir, "Chart.json" if level == "SP" else "%s.json" % level)
+    chart_path = os.path.join("chart", chart_dir,
+                              "Chart.json" if level == "SP" and os.path.isfile(os.path.join("chart", chart_dir, "Chart.json"))
+                              else "%s.json" % level)
     if not os.path.isfile(chart_path):
         return False, "找不到谱面：%s" % chart_path
 
     audio = find_audio(base_id, level)
     if not audio:
         return False, "找不到音频：music/%s.(ogg|wav|mp3)" % base_id
-    picture = find_picture(base_id)
+    picture = find_picture(base_id, level)
     if not picture:
         return False, "找不到曲绘：illustration*/%s.png" % base_id
 
