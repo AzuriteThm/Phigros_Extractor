@@ -71,19 +71,67 @@ def load_infos():
     return infos
 
 
-def find_audio(base_id, level=None):
-    """按优先级找音频；IN 难度优先用 <id>_IN 专用音源（如 Cristalisia）；
-    c9s 隐藏曲的音频不以曲 id 命名，回退到 music/c9s.* 里的第一个。"""
+MUSIC_DIRS = ("music_ogg", "music_wav", "music")  # music 为旧版布局兼容
+
+
+def find_audio(base_id, level=None, prefer=("ogg", "wav", "mp3")):
+    """按优先级找音频。IN 难度优先用 <id>_IN 专用音源（如 Cristalisia）；
+    c9s 隐藏曲的音频不以曲 id 命名，回退到 music_ogg/c9s.* 里的第一个。
+    prefer 控制扩展名优先级（目录按 MUSIC_DIRS 顺序，ogg 目录在前）。"""
     cands = []
     if level == "IN":
-        cands += ["music/%s_IN%s" % (base_id, e) for e in AUDIO_EXTS]
-    cands += ["music/%s%s" % (base_id, e) for e in AUDIO_EXTS]
+        for d in MUSIC_DIRS:
+            for e in AUDIO_EXTS:
+                cands.append("%s/%s_IN%s" % (d, base_id, e))
+    for p in prefer:
+        e = p if p.startswith(".") else "." + p
+        for d in MUSIC_DIRS:
+            cands.append("%s/%s%s" % (d, base_id, e))
+    for d in MUSIC_DIRS:
+        for e in AUDIO_EXTS:
+            p = "%s/%s%s" % (d, base_id, e)
+            if p not in cands:
+                cands.append(p)
     if base_id.startswith("c9s."):
-        cands += sorted(p for p in glob.glob("music/c9s.*") if p.endswith(tuple(AUDIO_EXTS)))
+        cands += sorted(p for d in MUSIC_DIRS for p in glob.glob("%s/c9s.*" % d)
+                        if p.endswith(tuple(AUDIO_EXTS)))
     for p in cands:
         if os.path.isfile(p):
             return p
     return None
+
+
+# 音频压缩档位：名称 -> (ffmpeg 参数, 说明)
+AUDIO_MODES = {
+    # 不压缩：直接打包现有音频（优先无损 wav）
+    "raw": (None, "不压缩（原音质 wav）"),
+    # 平衡：ogg 192kbps 立体声（约为 wav 的 1/8）
+    "balanced": (["-c:a", "libvorbis", "-b:a", "192k"], "平衡（ogg 192k）"),
+    # 小文件：ogg 64kbps 单声道 32kHz（约为 wav 的 1/30）
+    "small": (["-c:a", "libvorbis", "-b:a", "64k", "-ac", "1", "-ar", "32000"], "小文件（ogg 64k 单声道）"),
+}
+
+
+def transcode_audio(src, mode):
+    """用 ffmpeg 把音频转码为指定档位的 ogg，返回 (字节, 扩展名) 或 (None, 错误)。"""
+    import subprocess
+    import tempfile
+    args, _ = AUDIO_MODES[mode]
+    fd, tmp = tempfile.mkstemp(suffix=".ogg")
+    os.close(fd)
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-vn"] + args + [tmp],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if r.returncode != 0:
+            return None, "ffmpeg 转码失败（请确认 ffmpeg 已安装并在 PATH 中）"
+        with open(tmp, "rb") as f:
+            return f.read(), ".ogg"
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def find_picture(base_id, level=None):
@@ -151,21 +199,36 @@ def meta_for(base_id, infos):
     return (name or base_id), composer, "", []
 
 
-def build_pez(base_id, chart_dir, level, meta, out_path):
+def build_pez(base_id, chart_dir, level, meta, out_path, mode=None):
     """打包一个 .pez（zip：info.txt + 谱面 + 曲绘 + 音频）。返回 (ok, 消息)。
-    meta = (曲名, 曲师, 画师, 定数列表, 谱师列表)"""
+    meta = (曲名, 曲师, 画师, 定数列表, 谱师列表)
+    mode: None=旧行为（ogg 直包，phira.py 批量用）；raw=不压缩(wav)；
+          balanced=ogg 192k；small=ogg 64k 单声道"""
     chart_path = os.path.join("chart", chart_dir,
                               "Chart.json" if level == "SP" and os.path.isfile(os.path.join("chart", chart_dir, "Chart.json"))
                               else "%s.json" % level)
     if not os.path.isfile(chart_path):
         return False, "找不到谱面：%s" % chart_path
 
-    audio = find_audio(base_id, level)
+    # GUI 档位（含 raw）优先无损 wav：raw 直接打包，转码档以 wav 为源避免二次有损
+    if mode is None:
+        audio = find_audio(base_id, level)  # ogg 优先（批量打包体积小）
+    else:
+        audio = find_audio(base_id, level, prefer=("wav", "ogg", "mp3"))
     if not audio:
-        return False, "找不到音频：music/%s.(ogg|wav|mp3)" % base_id
+        return False, "找不到音频：music_ogg|music_wav/%s.(ogg|wav)" % base_id
     picture = find_picture(base_id, level)
     if not picture:
         return False, "找不到曲绘：illustration*/%s.png" % base_id
+
+    audio_data = None
+    if mode in AUDIO_MODES and mode != "raw":
+        audio_data, err = transcode_audio(audio, mode)
+        if audio_data is None:
+            return False, err
+        audio_ext = ".ogg"
+    else:
+        audio_ext = os.path.splitext(audio)[1]
 
     name, composer, illustrator, difficulty, charter_list = meta
     lv_index = LEVELS.index(level) if level in LEVELS else -1
@@ -179,7 +242,6 @@ def build_pez(base_id, chart_dir, level, meta, out_path):
         if letter:
             name = "%s [%s]" % (name, letter)
 
-    audio_ext = os.path.splitext(audio)[1]
     info_txt = (
         "#\n"
         "Name: %s\n"
@@ -197,7 +259,10 @@ def build_pez(base_id, chart_dir, level, meta, out_path):
         pez.writestr("info.txt", info_txt)
         pez.write(chart_path, "%s.json" % base_id)
         pez.write(picture, "%s.png" % base_id)
-        pez.write(audio, "%s%s" % (base_id, audio_ext))
+        if audio_data is not None:
+            pez.writestr("%s%s" % (base_id, audio_ext), audio_data)
+        else:
+            pez.write(audio, "%s%s" % (base_id, audio_ext))
     return True, out_path
 
 
@@ -251,6 +316,15 @@ class App(tk.Tk):
                                  state="disabled", command=self.on_level)
             rb.pack(side="left", padx=4)
             self.level_buttons[lv] = rb
+
+        ttk.Label(panel, text="音频体积:").pack(anchor="w", pady=(10, 0))
+        self.quality_var = tk.StringVar(value="raw")
+        qframe = ttk.Frame(panel)
+        qframe.pack(anchor="w")
+        for key in ("raw", "balanced", "small"):
+            _, label = AUDIO_MODES[key]
+            ttk.Radiobutton(qframe, text=label, value=key, variable=self.quality_var).pack(
+                side="left", padx=(0, 10))
 
         # ── 底部：生成 ──────────────────────────────
         bottom = ttk.Frame(self)
@@ -337,13 +411,18 @@ class App(tk.Tk):
             return
         m = info_for(base_id, self.infos)
         meta = self.song_meta[base_id] + (m["Charter"] if m else [],)
+        mode = self.quality_var.get()
+        self.status_var.set("正在生成（%s）..." % AUDIO_MODES[mode][1])
+        self.update_idletasks()
         try:
-            ok, msg = build_pez(base_id, chart_dir, lv, meta, out)
+            ok, msg = build_pez(base_id, chart_dir, lv, meta, out, mode=mode)
         except Exception as e:
             ok, msg = False, str(e)
         if ok:
+            size_mb = os.path.getsize(out) / 1024 / 1024
             self.status_var.set("已生成: %s" % msg)
-            messagebox.showinfo("完成", "已生成\n%s" % msg)
+            messagebox.showinfo("完成", "已生成\n%s\n体积: %.1f MB（%s）" % (
+                msg, size_mb, AUDIO_MODES[mode][1]))
         else:
             self.status_var.set("失败: %s" % msg)
             messagebox.showerror("失败", msg)

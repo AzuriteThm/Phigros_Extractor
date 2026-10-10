@@ -33,8 +33,8 @@
 | 脚本 | 作用 |
 |---|---|
 | `gameInformation.py` | 从安装包场景数据导出 `info/` 信息表（见下） |
-| `resource.py` | 按 Addressables catalog 提取全部资源（含解密隐藏曲） |
-| `ogg2wav.py` | 把 `music/` 与 `c9s/` 下的 ogg 转成 wav 并删除源文件（需 ffmpeg） |
+| `resource.py` | 按 Addressables catalog 提取全部资源（含解密隐藏曲），音频存 `music_ogg/` |
+| `ogg2wav.py` | 把 `music_ogg/` 的 ogg 转成 `music_wav/` 的 wav（**保留 ogg 源**，需 ffmpeg） |
 
 ## 产出目录
 
@@ -42,7 +42,8 @@
 |---|---|
 | `info/` | `difficulty.tsv` 定数 · `info.tsv` 曲名/曲师/画师/谱师 · `collection.tsv` 收藏品中文名 · `avatar.txt` 头像 · `single.txt` / `illustration.txt` 单曲/曲绘列表 · `tips.txt` 游戏小贴士 |
 | `chart/<曲id>.0/` | 谱面 `EZ/HD/IN/AT.json`（明文，formatVersion 3）；`chart/c9s.*/` 为第九章隐藏曲 |
-| `music/` | 音乐（ogg，转 wav 后为 wav）；`<曲id>_IN.wav` 为 IN 专用音源（如 Cristalisia） |
+| `music_ogg/` | 提取的原始音频（ogg，不删除）；`<曲id>_IN.ogg` 为 IN 专用音源（如 Cristalisia） |
+| `music_wav/` | ogg2wav 转出的无损 wav |
 | `illustration/` `illustrationBlur/` `illustrationLowRes/` | 曲绘三套（原图 / 模糊 / 低清） |
 | `avatar/` | 头像 PNG |
 | `c9s/` | 第九章隐藏曲其余素材（合集头图、剧情立绘等） |
@@ -50,8 +51,19 @@
 ## 打包 .pez（Phira 自制谱）
 
 **交互式**：`python phira_gui.py`
-弹出窗口：搜索/选择曲目 → 点选难度（该曲没有的难度自动置灰）→ 保存 .pez。
+弹出窗口：搜索/选择曲目 → 点选难度（该曲没有的难度自动置灰）→ 选音频体积档位 → 保存 .pez。
 选中曲目后右侧面板显示曲师/画师/定数/谱师，切换难度时联动更新。
+
+**音频体积档位**（生成 pez 时的音质/体积权衡，转码用 ffmpeg）：
+
+| 档位 | 内容 | 参考体积* |
+|---|---|---|
+| 不压缩 | 无损 wav 原音质 | ~60 MB |
+| 平衡 | ogg 192kbps 立体声 | ~9 MB |
+| 小文件 | ogg 64kbps 单声道 32kHz | ~6 MB |
+
+\* 以 What do you want more than a Happy ending?（EZ，谱面本身 4.7MB）为例；
+小文件档体积下限由谱面决定。转码以 wav 为源，避免二次有损压缩。
 
 **批量**：`python phira.py`
 把所有曲目按难度打包到 `phira/{EZ,HD,IN,AT,SP}/`（隐藏曲进 SP）。

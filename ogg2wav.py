@@ -1,43 +1,67 @@
+# -*- coding: utf-8 -*-
+"""把 music_ogg/ 下的 ogg 转换为 music_wav/ 下的 wav（保留源文件，不删除）。
+c9s/ 目录下的 ogg 就地转换（同样保留）。已存在的 wav 自动跳过。
+
+使用 ffmpeg（需在 PATH 中），不依赖 pydub。
+"""
 import os
-from pydub import AudioSegment
+import subprocess
+import sys
 
-def convert_ogg_to_wav(input_dir, output_dir=None, remove_original=False):
-    """
-    将 input_dir 下所有 .ogg 文件转换为 .wav
+AUDIO_EXTS = (".ogg", ".mp3", ".flac")
 
-    参数:
-        input_dir: 包含 .ogg 文件的文件夹路径
-        output_dir: 输出文件夹路径（默认与 input_dir 相同）
-        remove_original: 是否删除原始文件（默认 False）
-    """
 
-    if output_dir is None:
-        output_dir = input_dir
+def convert(src, dst):
+    """ffmpeg 转码；返回 (成功, 消息)。"""
+    if os.path.isfile(dst):
+        return True, "skip"
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-i", src, "-vn", dst],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return r.returncode == 0, dst
 
-    # 确保输出文件夹存在
-    os.makedirs(output_dir, exist_ok=True)
 
-    # 遍历输入文件夹
-    for filename in os.listdir(input_dir):
-        if filename.lower().endswith('.ogg'):
-            ogg_path = os.path.join(input_dir, filename)
-            wav_name = os.path.splitext(filename)[0] + '.wav'
-            wav_path = os.path.join(output_dir, wav_name)
+def main():
+    ok = fail = skip = 0
+    # music_ogg/*.ogg -> music_wav/*.wav
+    if os.path.isdir("music_ogg"):
+        os.makedirs("music_wav", exist_ok=True)
+        for f in sorted(os.listdir("music_ogg")):
+            if not f.lower().endswith(AUDIO_EXTS):
+                continue
+            src = os.path.join("music_ogg", f)
+            dst = os.path.join("music_wav", os.path.splitext(f)[0] + ".wav")
+            if os.path.isfile(dst):
+                skip += 1
+                continue
+            success, msg = convert(src, dst)
+            if success:
+                ok += 1
+                print("转换成功: %s -> %s" % (src, dst))
+            else:
+                fail += 1
+                print("转换失败: %s" % src)
+    # c9s/*.ogg -> c9s/*.wav（就地，保留源）
+    if os.path.isdir("c9s"):
+        for f in sorted(os.listdir("c9s")):
+            if not f.lower().endswith(AUDIO_EXTS):
+                continue
+            src = os.path.join("c9s", f)
+            dst = os.path.join("c9s", os.path.splitext(f)[0] + ".wav")
+            if os.path.isfile(dst):
+                skip += 1
+                continue
+            success, _ = convert(src, dst)
+            if success:
+                ok += 1
+                print("转换成功: %s" % dst)
+            else:
+                fail += 1
+                print("转换失败: %s" % src)
+    print("完成：转换 %d，跳过 %d，失败 %d" % (ok, skip, fail))
+    if fail:
+        sys.exit(1)
 
-            try:
-                # 读取 ogg 并导出为 wav
-                audio = AudioSegment.from_ogg(ogg_path)
-                audio.export(wav_path, format='wav')
-                print(f"转换成功: {ogg_path} -> {wav_path}")
-
-                if remove_original:
-                    os.remove(ogg_path)
-                    print(f"已删除原始文件: {ogg_path}")
-            except Exception as e:
-                print(f"转换失败 {ogg_path}: {e}")
 
 if __name__ == "__main__":
-    # 将 music 与 c9s 文件夹下的 ogg 全部转成 wav
-    for folder in ("./music", "./c9s"):
-        if os.path.isdir(folder):
-            convert_ogg_to_wav(folder, folder, True)
+    main()

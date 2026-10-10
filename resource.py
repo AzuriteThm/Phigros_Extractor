@@ -30,12 +30,13 @@ def _strip_song_index(song):
 
 
 def sanitize(path):
-    """仅清洗文件名中的 Windows 非法字符（头像名可能含 : / 等，如 Cipher : /2&//<|0），
-    目录分隔符保持不变。"""
-    head, _, tail = path.rpartition("/")
+    """清洗 Windows 非法字符。按第一个 "/" 切出目录前缀，其余部分整体清洗——
+    头像名本身可能含 : / 等（如 "Cipher : /2&//<|0"），按最后一个 "/" 切分会漏掉
+    文件名内部的斜杠，导致 io 线程 open() 崩溃。"""
+    head, sep, tail = path.partition("/")
     for ch in '\\/:*?"<>|':
         tail = tail.replace(ch, "_")
-    return head + "/" + tail if head else tail
+    return head + sep + tail
 
 
 def io():
@@ -46,13 +47,17 @@ def io():
         else:
             path, resource = item
             path = sanitize(path)
-            if type(resource) == BytesIO:
-                with resource:
+            try:
+                if type(resource) == BytesIO:
+                    with resource:
+                        with open(path, "wb") as f:
+                            f.write(resource.getbuffer())
+                else:
                     with open(path, "wb") as f:
-                        f.write(resource.getbuffer())
-            else:
-                with open(path, "wb") as f:
-                    f.write(resource)
+                        f.write(resource)
+            except OSError:
+                import sys
+                print("写入失败: %s" % path, file=sys.stderr)
 
 
 def save_image(path, image):
@@ -88,7 +93,7 @@ def save(key, entry, pool, logger):
                 os.mkdir(p)
             queue_in.put(("chart/%s/Chart.json" % key, obj.script))
         elif config["music"] and type(obj).__name__ == "AudioClip" and obj.m_Name == "music":
-            pool.submit(save_music, "music/%s.ogg" % key, obj)
+            pool.submit(save_music, "music_ogg/%s.ogg" % key, obj)
         elif type(obj).__name__ == "AudioClip" and config["music"]:
             pool.submit(save_music, "c9s/%s_%s.ogg" % (key, obj.m_Name), obj)
         elif type(obj).__name__ in ("Texture2D", "Sprite"):
@@ -128,15 +133,15 @@ def save(key, entry, pool, logger):
         lv = key[key.index("/Illustration_") + len("/Illustration_"):-4]
         pool.submit(save_image, "illustration/%s_%s.png" % (song, lv), obj.image)
     elif config["illustrationBlur"] and "/IllustrationBlur." in key:
-        key = key[:key.index("/IllustrationBlur.")]
+        key = _strip_song_index(key[:key.index("/IllustrationBlur.")])
         bytesIO = BytesIO()
         obj.image.save(bytesIO, "png")
         queue_in.put(("illustrationBlur/%s.png" % key, bytesIO))
     elif config["illustrationLowRes"] and "/IllustrationLowRes." in key:
-        key = key[:key.index("/IllustrationLowRes.")]
+        key = _strip_song_index(key[:key.index("/IllustrationLowRes.")])
         pool.submit(save_image, "illustrationLowRes/%s.png" % key, obj.image)
     elif config["illustration"] and "/Illustration." in key:
-        key = key[:key.index("/Illustration.")]
+        key = _strip_song_index(key[:key.index("/Illustration.")])
         pool.submit(save_image, "illustration/%s.png" % key, obj.image)
     elif config["music"] and key.endswith("/music.wav"):
         # 曲目 id 含编号后缀（曲名.曲师.N，N=0 为主版本，命名时剥离；.1~.6 为变体保留）
@@ -147,12 +152,12 @@ def save(key, entry, pool, logger):
             key, n = key.rsplit(".", 1)
             if n != "0":
                 suffix = "." + n
-        pool.submit(save_music, "music/%s%s.ogg" % (key, suffix), obj)
+        pool.submit(save_music, "music_ogg/%s%s.ogg" % (key, suffix), obj)
     elif config["music"] and key.endswith("/music_IN.wav"):
         key = key[:-len("/music_IN.wav")]
         if "." in key and key.rsplit(".", 1)[-1].isdigit():
             key = key.rsplit(".", 1)[0]
-        pool.submit(save_music, "music/%s_IN.ogg" % key, obj)
+        pool.submit(save_music, "music_ogg/%s_IN.ogg" % key, obj)
 
 
 def load_bundle(apk, entry_name, c9s_password):
@@ -236,7 +241,7 @@ def run(path, logger):
                     gc.collect()
     finally:
         queue_in.put(None)
-        thread.join(timeout=60)
+        thread.join()
     logger.info("%f秒" % round(time.time() - ti, 4))
 
 
@@ -269,9 +274,9 @@ if __name__ == "__main__":
     if config["music"]:
         from fsb5 import FSB5
         from fsb5 import vorbis
-    type_list = ("avatar", "chart", "c9s", "illustrationBlur", "illustrationLowRes", "illustration", "music")
+    type_list = ("avatar", "chart", "c9s", "illustrationBlur", "illustrationLowRes", "illustration", "music_ogg")
     for directory in type_list:
-        if directory != "c9s" and not config[directory]:
+        if directory != "c9s" and not config["music" if directory == "music_ogg" else directory]:
             continue
         if not os.path.isdir(directory):
             os.mkdir(directory)
