@@ -1,4 +1,4 @@
-# Phigros 拆包打包工具（PhigrosPacker）
+# Phigros 解包打包工具（PhigrosExtractor）
 
 放入 Phigros 安装包，一键提取谱面/曲绘/音频，并打包 Phira 可读取的 `.pez`。
 适配 Phigros 3.x / 4.0.0 / 4.0.1。仅供个人学习，请勿传播提取资源。
