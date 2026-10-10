@@ -29,14 +29,19 @@ def _strip_song_index(song):
     return song
 
 
+def _sanitize_name(name):
+    """把 Windows 文件名非法字符替换为下划线。"""
+    return "".join("_" if c in '\\/:*?"<>|' else c for c in name)
+
+
 def sanitize(path):
-    """清洗 Windows 非法字符。按第一个 "/" 切出目录前缀，其余部分整体清洗——
-    头像名本身可能含 : / 等（如 "Cipher : /2&//<|0"），按最后一个 "/" 切分会漏掉
-    文件名内部的斜杠，导致 io 线程 open() 崩溃。"""
-    head, sep, tail = path.partition("/")
-    for ch in '\\/:*?"<>|':
-        tail = tail.replace(ch, "_")
-    return head + sep + tail
+    """只清洗路径最后一段（文件名）的非法字符；目录段保持原样。
+    多级路径（chart/曲id/EZ.json）的目录分隔符不能动——按第一个 "/" 整体清洗
+    会把曲 id 与文件名之间的 "/" 也洗掉，导致谱面被写平到 chart/ 根目录。
+    含非法字符的头像名在 save() 的 avatar 分支用 _sanitize_name 预先清洗。"""
+    parts = path.split("/")
+    parts[-1] = _sanitize_name(parts[-1])
+    return "/".join(parts)
 
 
 def io():
@@ -107,7 +112,7 @@ def save(key, entry, pool, logger):
                     os.mkdir("c9s")
                 pool.submit(save_image, "c9s/%s_%s.png" % (key, name), obj.image)
     elif config["avatar"] and key[:7] == "avatar.":
-        key = avatar.get(key[7:], key[7:])
+        key = _sanitize_name(avatar.get(key[7:], key[7:]))
         bytesIO = BytesIO()
         obj.image.save(bytesIO, "png")
         queue_in.put(("avatar/%s.png" % key, bytesIO))

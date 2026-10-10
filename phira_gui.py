@@ -199,11 +199,12 @@ def meta_for(base_id, infos):
     return (name or base_id), composer, "", []
 
 
-def build_pez(base_id, chart_dir, level, meta, out_path, mode=None):
+def build_pez(base_id, chart_dir, level, meta, out_path, mode=None, audio_path=None):
     """打包一个 .pez（zip：info.txt + 谱面 + 曲绘 + 音频）。返回 (ok, 消息)。
     meta = (曲名, 曲师, 画师, 定数列表, 谱师列表)
-    mode: None=旧行为（ogg 直包，phira.py 批量用）；raw=不压缩(wav)；
-          balanced=ogg 192k；small=ogg 64k 单声道"""
+    mode: None=旧行为（ogg 直包）；raw=不压缩(wav)；balanced=ogg 192k；small=ogg 64k 单声道
+    audio_path: 指定音频源文件（跳过 find_audio，phira.py 批量按所选格式选源后传入；
+    与转码档位互斥使用——传了 audio_path 就按原样打包）"""
     chart_path = os.path.join("chart", chart_dir,
                               "Chart.json" if level == "SP" and os.path.isfile(os.path.join("chart", chart_dir, "Chart.json"))
                               else "%s.json" % level)
@@ -211,18 +212,20 @@ def build_pez(base_id, chart_dir, level, meta, out_path, mode=None):
         return False, "找不到谱面：%s" % chart_path
 
     # GUI 档位（含 raw）优先无损 wav：raw 直接打包，转码档以 wav 为源避免二次有损
-    if mode is None:
+    if audio_path is not None:
+        audio = audio_path
+    elif mode is None:
         audio = find_audio(base_id, level)  # ogg 优先（批量打包体积小）
     else:
         audio = find_audio(base_id, level, prefer=("wav", "ogg", "mp3"))
-    if not audio:
+    if not audio or (audio_path is not None and not os.path.isfile(audio)):
         return False, "找不到音频：music_ogg|music_wav/%s.(ogg|wav)" % base_id
     picture = find_picture(base_id, level)
     if not picture:
         return False, "找不到曲绘：illustration*/%s.png" % base_id
 
     audio_data = None
-    if mode in AUDIO_MODES and mode != "raw":
+    if audio_path is None and mode in AUDIO_MODES and mode != "raw":
         audio_data, err = transcode_audio(audio, mode)
         if audio_data is None:
             return False, err
